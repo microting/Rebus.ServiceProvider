@@ -1,0 +1,55 @@
+name: .NET Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+jobs:
+  build-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET 7.0
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 7.0.x
+    - name: Restore dependencies
+      run: dotnet restore -v Minimal
+    - name: Build
+      run: dotnet build Rebus.ServiceProvider -c Release --no-restore /p:EnableSourceLink=false
+    - name: Test
+      run: dotnet test Rebus.ServiceProvider.Tests --no-restore
+  build-windows:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET 7.0
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 7.0.x
+    - name: Restore dependencies
+      run: dotnet restore -v Minimal
+    - name: Build
+      run: dotnet build Rebus.ServiceProvider -c Release --no-restore /p:EnableSourceLink=false
+    - name: Test
+      run: dotnet test Rebus.ServiceProvider.Tests --no-restore
+  deploy:
+    needs: [build-windows, build-ubuntu]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+    - name: Setup .NET Core
+      uses: actions/setup-dotnet@v3
+      with:
+        dotnet-version: 7.0.x
+    - name: Install dependencies
+      run: dotnet restore
+    - name: Get the version
+      id: get_version
+      run: echo ::set-output name=VERSION::$(echo $GITHUB_REF | cut -d / -f 3 | cut -d "v" -f 2)
+    - name: Build
+      run: dotnet build --configuration Release
+    - name: Pack
+      run: dotnet pack Rebus.ServiceProvider.sln -c Release -o ./artifacts -p:PackageVersion=${{ steps.get_version.outputs.VERSION }}
+    - name: Push generated Rebus package to GitHub registry
+      run: dotnet nuget push /home/runner/work/Rebus/Rebus/artifacts/Microting.Rebus.ServiceProvider.${{ steps.get_version.outputs.VERSION }}.nupkg -k ${{secrets.NUGET_SECRET_KEY}} -s https://api.nuget.org/v3/index.json --skip-duplicate --no-symbols

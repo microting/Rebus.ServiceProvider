@@ -7,7 +7,7 @@ namespace Rebus.ServiceProvider;
 
 public static class ServiceProviderScopeStepContextExtensions
 {
-    #if NET6_0
+    #if NET7_0
     /// <summary>
     /// Digs out the current <see cref="AsyncServiceScope"/> from Rebus' incoming step context. Is safe to call from an outgoing step,
     /// thus making it possible to access the scope associated with the message currently being handled, simply returning NULL when called outside
