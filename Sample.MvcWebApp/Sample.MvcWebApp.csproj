@@ -10,8 +10,4 @@
     <ProjectReference Include="..\Rebus.ServiceProvider\Rebus.ServiceProvider.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <PackageReference Include="Microting.Rebus" Version="7.3.12" />
-  </ItemGroup>
-
 </Project>

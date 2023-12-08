@@ -39,9 +39,9 @@ public class DependencyInjectionHandlerActivator : IHandlerActivator
     {
         try
         {
-            var scope = GetOrCreateScope(transactionContext);
+            var serviceProvider = GetOrCreateScopeAndReturnServiceProvider(transactionContext);
 
-            return GetMessageHandlersForMessage<TMessage>(scope.ServiceProvider);
+            return GetMessageHandlersForMessage<TMessage>(serviceProvider);
         }
         catch (ObjectDisposedException exception)
         {
@@ -49,13 +49,12 @@ public class DependencyInjectionHandlerActivator : IHandlerActivator
         }
     }
 
-#if NET6_0
-    AsyncServiceScope GetOrCreateScope(ITransactionContext transactionContext)
+    IServiceProvider GetOrCreateScopeAndReturnServiceProvider(ITransactionContext transactionContext)
     {
         var stepContext = transactionContext.GetOrNull<IncomingStepContext>(StepContext.StepContextKey);
 
         // can't think of any situations when there would NOT be an incoming step context in the transaction context, except in tests.... so...
-        if (stepContext == null) return _provider.CreateAsyncScope();
+        if (stepContext == null) return _provider.CreateAsyncScope().ServiceProvider;
 
         AsyncServiceScope CreateAndInitializeNewScope()
         {
@@ -65,27 +64,17 @@ public class DependencyInjectionHandlerActivator : IHandlerActivator
             return scope;
         }
 
-        return stepContext.Load<AsyncServiceScope?>() ?? CreateAndInitializeNewScope();
+        // if there's already a user-provided sync scope, use that 
+        var syncScope = stepContext.Load<IServiceScope>();
+        if (syncScope != null) return syncScope.ServiceProvider;
+
+        // if there's already an async scope, use that
+        var asyncScope = stepContext.Load<AsyncServiceScope?>();
+        if (asyncScope != null) return asyncScope.Value.ServiceProvider;
+
+        // else create new async scope
+        return CreateAndInitializeNewScope().ServiceProvider;
     }
-#else
-    IServiceScope GetOrCreateScope(ITransactionContext transactionContext)
-    {
-        var stepContext = transactionContext.GetOrNull<IncomingStepContext>(StepContext.StepContextKey);
-
-        // can't think of any situations when there would NOT be an incoming step context in the transaction context, except in tests.... so...
-        if (stepContext == null) return _provider.CreateScope();
-
-        IServiceScope CreateAndInitializeNewScope()
-        {
-            var scope = _provider.CreateScope();
-            transactionContext.OnDisposed(_ => scope.Dispose());
-            stepContext.Save(scope);
-            return scope;
-        }
-
-        return stepContext.Load<IServiceScope>() ?? CreateAndInitializeNewScope();
-    }
-#endif
 
     IReadOnlyList<IHandleMessages<TMessage>> GetMessageHandlersForMessage<TMessage>(IServiceProvider serviceProvider)
     {
@@ -101,12 +90,13 @@ public class DependencyInjectionHandlerActivator : IHandlerActivator
     static Type[] FigureOutTypesToResolve(Type messageType)
     {
         var handledMessageTypes = new HashSet<Type>(messageType.GetBaseTypes()) { messageType };
-
         var compatibleMessageTypes = new HashSet<Type>();
+
         foreach (var type in handledMessageTypes)
         {
             compatibleMessageTypes.UnionWith(GetCompatibleMessageHandlerTypes(type));
         }
+
         handledMessageTypes.UnionWith(compatibleMessageTypes);
 
         return handledMessageTypes
@@ -121,17 +111,15 @@ public class DependencyInjectionHandlerActivator : IHandlerActivator
          */
     static IEnumerable<Type> GetCompatibleMessageHandlerTypes(Type type)
     {
-        if (type.IsGenericType)
-        {
-            var genericDefinition = type.GetGenericTypeDefinition();
-            var combinations = genericDefinition.GetGenericArguments()
-                .Zip(type.GetGenericArguments(), GenericTypePair.Create)
-                .Select(GetBaseTypes)
-                .CartesianProduct();
-            return combinations.Select(types => genericDefinition.MakeGenericType(types.ToArray()));
-        }
+        if (!type.IsGenericType) return type.GetBaseTypes();
 
-        return type.GetBaseTypes();
+        var genericDefinition = type.GetGenericTypeDefinition();
+        var combinations = genericDefinition.GetGenericArguments()
+            .Zip(type.GetGenericArguments(), (generic, actual) => new GenericTypePair(generic, actual))
+            .Select(GetBaseTypes)
+            .CartesianProduct();
+
+        return combinations.Select(types => genericDefinition.MakeGenericType(types.ToArray()));
     }
 
     /// <summary>
@@ -173,18 +161,5 @@ public class DependencyInjectionHandlerActivator : IHandlerActivator
     /// <summary>
     ///     Represents a generic type argument and its corresponding actual type.
     /// </summary>
-    class GenericTypePair
-    {
-        public Type GenericType { get; private set; }
-        public Type ActualType { get; private set; }
-
-        public static GenericTypePair Create(Type genericType, Type actualType)
-        {
-            return new()
-            {
-                GenericType = genericType,
-                ActualType = actualType
-            };
-        }
-    }
+    record GenericTypePair(Type GenericType, Type ActualType);
 }
